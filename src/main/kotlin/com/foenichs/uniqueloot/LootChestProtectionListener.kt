@@ -65,6 +65,9 @@ class LootChestProtectionListener(
     fun onBlockPlace(event: BlockPlaceEvent) {
         if (event.block.type != Material.HOPPER) return
 
+        // Exclude players in Creative mode
+        if (event.player.gameMode == GameMode.CREATIVE) return
+
         val block = event.block
         val directions = listOf(
             block.getRelative(0, 1, 0),  // Above
