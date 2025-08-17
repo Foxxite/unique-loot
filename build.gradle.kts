@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.foenichs"
-version = "1.0.0-beta"
+version = "1.0.1-beta"
 
 repositories {
     mavenCentral()
