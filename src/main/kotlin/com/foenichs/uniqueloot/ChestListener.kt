@@ -155,10 +155,14 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         val random = Random()
         val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
 
-        val slotIterator = (0 until inventory.size).iterator()
+        // Get all empty slot indices
+        val emptySlots = (0 until inventory.size).filter { inventory.getItem(it) == null }.toMutableList()
+        emptySlots.shuffle(random)
+
+        // Place items in random empty slots like vanilla
         for (item in items) {
-            if (!slotIterator.hasNext()) break
-            val slot = slotIterator.next()
+            if (emptySlots.isEmpty()) break
+            val slot = emptySlots.removeAt(0)
             inventory.setItem(slot, item)
         }
     }
