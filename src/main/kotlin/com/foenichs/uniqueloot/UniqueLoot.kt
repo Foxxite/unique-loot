@@ -2,12 +2,16 @@ package com.foenichs.uniqueloot
 
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File
-import java.sql.DriverManager
 import java.sql.Connection
+import java.sql.DriverManager
 
 class UniqueLoot : JavaPlugin() {
 
     lateinit var connection: Connection
+        private set
+
+    private lateinit var chestListener: ChestListener
+    private lateinit var protectionListener: LootChestProtectionListener
 
     override fun onEnable() {
         // Ensure plugin folder exists
@@ -30,7 +34,13 @@ class UniqueLoot : JavaPlugin() {
         """.trimIndent()).use { it.execute() }
 
         // Register the chest listener
-        server.pluginManager.registerEvents(ChestListener(this), this)
+        chestListener = ChestListener(this)
+        server.pluginManager.registerEvents(chestListener, this)
+
+        // Register the loot chest protection listener
+        // Pass the ChestListener's map reference for dynamic tracking
+        protectionListener = LootChestProtectionListener(chestListener)
+        server.pluginManager.registerEvents(protectionListener, this)
     }
 
     override fun onDisable() {

@@ -166,4 +166,10 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
             inventory.setItem(slot, item)
         }
     }
+
+    fun isLootChest(chestId: String): Boolean {
+        // Checks if any player has a virtual inventory for this chest
+        return playerChests.values.any { it.containsKey(chestId) }
+    }
+
 }
