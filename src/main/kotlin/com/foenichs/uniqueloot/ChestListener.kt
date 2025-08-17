@@ -14,7 +14,6 @@ import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
 import org.bukkit.loot.LootContext
-import org.bukkit.loot.LootTable
 import java.util.Random
 import java.util.concurrent.CompletableFuture
 
@@ -33,19 +32,35 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         if (event.action != Action.RIGHT_CLICK_BLOCK) return
         if (block.type != Material.CHEST) return
         val chest = block.state as? Chest ?: return
-        val lootTable = chest.lootTable ?: return
 
         val chestId = "${chest.world.name}_${chest.x}_${chest.y}_${chest.z}"
         val playerUuid = player.uniqueId.toString()
-
         val chestMap = playerChests.getOrPut(playerUuid) { mutableMapOf() }
 
         // Create or get virtual inventory paired with the real chest
         val virtualInventoryPair = chestMap.getOrPut(chestId) {
             val inv = org.bukkit.Bukkit.createInventory(player, chest.inventory.size, Component.text("Loot Chest"))
 
+            // Populate virtual inventory from loot table
+            val lootTable = chest.lootTable
+            if (lootTable != null) {
+                val context = LootContext.Builder(chest.location)
+                    .lootedEntity(player)
+                    .build()
+                val random = Random()
+                val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
+
+                // Place items in virtual inventory like vanilla
+                val emptySlots = (0 until inv.size).filter { inv.getItem(it) == null }.toMutableList()
+                emptySlots.shuffle(random)
+                for (item in items) {
+                    if (emptySlots.isEmpty()) break
+                    inv.setItem(emptySlots.removeAt(0), item)
+                }
+            }
+
+            // Load player-specific saved items asynchronously (overwrites loot if necessary)
             CompletableFuture.runAsync {
-                // Load inventory from SQLite
                 plugin.connection.prepareStatement("""
                     SELECT slot, item_type, amount FROM player_chest
                     WHERE player_uuid = ? AND chest_id = ?
@@ -60,11 +75,6 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                         val material = Material.getMaterial(typeName) ?: continue
                         inv.setItem(slot, ItemStack(material, amount))
                     }
-                }
-
-                // Populate loot if empty
-                if (inv.all { it == null }) {
-                    populateLoot(lootTable, chest, player, inv)
                 }
             }
 
@@ -148,28 +158,8 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         }
     }
 
-    private fun populateLoot(lootTable: LootTable, chest: Chest, player: Player, inventory: Inventory) {
-        val context = LootContext.Builder(chest.location)
-            .lootedEntity(player)
-            .build()
-        val random = Random()
-        val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
-
-        // Get all empty slot indices
-        val emptySlots = (0 until inventory.size).filter { inventory.getItem(it) == null }.toMutableList()
-        emptySlots.shuffle(random)
-
-        // Place items in random empty slots like vanilla
-        for (item in items) {
-            if (emptySlots.isEmpty()) break
-            val slot = emptySlots.removeAt(0)
-            inventory.setItem(slot, item)
-        }
-    }
-
     fun isLootChest(chestId: String): Boolean {
         // Checks if any player has a virtual inventory for this chest
         return playerChests.values.any { it.containsKey(chestId) }
     }
-
 }
