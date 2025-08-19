@@ -27,11 +27,11 @@ class UniqueLoot : JavaPlugin() {
                 player_uuid TEXT NOT NULL,
                 chest_id TEXT NOT NULL,
                 slot INTEGER NOT NULL,
-                item_type TEXT NOT NULL,
-                amount INTEGER NOT NULL,
+                item_data TEXT NOT NULL,
                 PRIMARY KEY(player_uuid, chest_id, slot)
             );
-        """.trimIndent()).use { it.execute() }
+        """).executeUpdate()
+
 
         // Register the chest listener
         chestListener = ChestListener(this)

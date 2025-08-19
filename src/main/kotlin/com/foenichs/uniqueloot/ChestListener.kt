@@ -15,13 +15,24 @@ import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
 import org.bukkit.loot.LootContext
-import java.util.Random
+import org.yaml.snakeyaml.Yaml
 import java.util.concurrent.CompletableFuture
 
 class ChestListener(private val plugin: UniqueLoot) : Listener {
 
     private val playerChests: MutableMap<String, MutableMap<String, Pair<Inventory, Any>>> = mutableMapOf()
     private val chestViewers: MutableMap<String, MutableSet<Player>> = mutableMapOf()
+    private val yaml = Yaml()
+
+    // Serialize/deserialize ItemStack to YAML
+    private fun ItemStack.serializeToString(): String {
+        return yaml.dump(this.serialize())
+    }
+
+    private fun deserializeItemStack(data: String): ItemStack? {
+        val map = yaml.load<Map<String, Any>>(data) ?: return null
+        return ItemStack.deserialize(map)
+    }
 
     @EventHandler
     fun onPlayerInteract(event: PlayerInteractEvent) {
@@ -32,7 +43,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
 
         val blockState = block.state
 
-        // Vanilla behaviour
+        // Respect Vanilla interaction rules
         if (player.isSneaking) {
             val handItem = player.inventory.itemInMainHand
             if (handItem.type != Material.AIR) return
@@ -40,6 +51,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         val blockAbove = block.getRelative(0, 1, 0)
         if (blockAbove.type.isSolid) return
 
+        // Only proceed if it has a loot table
         val lootTable = when (blockState) {
             is Chest -> blockState.lootTable
             is Barrel -> blockState.lootTable
@@ -59,35 +71,50 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                 Component.text("Loot $blockTypeName")
             )
 
-            // Populate loot table
-            val context = LootContext.Builder(block.location)
-                .lootedEntity(player)
-                .build()
-            val random = Random()
-            val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
-
-            val emptySlots = (0 until inv.size).filter { inv.getItem(it) == null }.toMutableList()
-            emptySlots.shuffle(random)
-            for (item in items) {
-                if (emptySlots.isEmpty()) break
-                inv.setItem(emptySlots.removeAt(0), item)
-            }
-
-            // Load player-specific items asynchronously
+            // Load player-specific items asynchronously first
             CompletableFuture.runAsync {
-                plugin.connection.prepareStatement("""
-                    SELECT slot, item_type, amount FROM player_chest
-                    WHERE player_uuid = ? AND chest_id = ?
-                """).use { stmt ->
+                val hasSavedItems = plugin.connection.prepareStatement(
+                    """
+            SELECT COUNT(*) as count FROM player_chest
+            WHERE player_uuid = ? AND chest_id = ?
+        """
+                ).use { stmt ->
+                    stmt.setString(1, playerUuid)
+                    stmt.setString(2, chestId)
+                    val rs = stmt.executeQuery()
+                    rs.next()
+                    rs.getInt("count") > 0
+                }
+
+                // Only populate loot if there are no saved items
+                if (!hasSavedItems) {
+                    val context = LootContext.Builder(block.location).lootedEntity(player).build()
+                    val random = java.util.Random()
+                    val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
+
+                    val emptySlots = (0 until inv.size).filter { inv.getItem(it) == null }.toMutableList()
+                    emptySlots.shuffle(random)
+                    for (item in items) {
+                        if (emptySlots.isEmpty()) break
+                        inv.setItem(emptySlots.removeAt(0), item)
+                    }
+                }
+
+                // Load any saved items
+                plugin.connection.prepareStatement(
+                    """
+            SELECT slot, item_data FROM player_chest
+            WHERE player_uuid = ? AND chest_id = ?
+        """
+                ).use { stmt ->
                     stmt.setString(1, playerUuid)
                     stmt.setString(2, chestId)
                     val rs = stmt.executeQuery()
                     while (rs.next()) {
                         val slot = rs.getInt("slot")
-                        val typeName = rs.getString("item_type") ?: continue
-                        val amount = rs.getInt("amount")
-                        val material = Material.getMaterial(typeName) ?: continue
-                        inv.setItem(slot, ItemStack(material, amount))
+                        val serialized = rs.getString("item_data") ?: continue
+                        val item = deserializeItemStack(serialized) ?: continue
+                        inv.setItem(slot, item)
                     }
                 }
             }
@@ -113,25 +140,30 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         val realBlock = chestPairEntry.value.second
 
         CompletableFuture.runAsync {
-            plugin.connection.prepareStatement("""
+            // Delete previous saved items
+            plugin.connection.prepareStatement(
+                """
                 DELETE FROM player_chest WHERE player_uuid = ? AND chest_id = ?
-            """).use { stmt ->
+            """
+            ).use { stmt ->
                 stmt.setString(1, player.uniqueId.toString())
                 stmt.setString(2, chestId)
                 stmt.executeUpdate()
             }
 
-            plugin.connection.prepareStatement("""
-                INSERT INTO player_chest (player_uuid, chest_id, slot, item_type, amount)
-                VALUES (?, ?, ?, ?, ?)
-            """).use { stmt ->
+            // Insert serialized items
+            plugin.connection.prepareStatement(
+                """
+                INSERT INTO player_chest (player_uuid, chest_id, slot, item_data)
+                VALUES (?, ?, ?, ?)
+            """
+            ).use { stmt ->
                 for (slot in 0 until inventory.size) {
                     val item = inventory.getItem(slot) ?: continue
                     stmt.setString(1, player.uniqueId.toString())
                     stmt.setString(2, chestId)
                     stmt.setInt(3, slot)
-                    stmt.setString(4, item.type.name)
-                    stmt.setInt(5, item.amount)
+                    stmt.setString(4, item.serializeToString())
                     stmt.addBatch()
                 }
                 stmt.executeBatch()
@@ -153,6 +185,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                     blockState.open()
                     blockState.world.playSound(blockState.location, Sound.BLOCK_CHEST_OPEN, 1.0f, 1.0f)
                 }
+
                 is Barrel -> {
                     blockState.world.playSound(blockState.location, Sound.BLOCK_BARREL_OPEN, 1.0f, 1.0f)
                 }
@@ -172,6 +205,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                     blockState.close()
                     blockState.world.playSound(blockState.location, Sound.BLOCK_CHEST_CLOSE, 1.0f, 1.0f)
                 }
+
                 is Barrel -> {
                     blockState.world.playSound(blockState.location, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
                 }
