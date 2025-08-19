@@ -31,12 +31,20 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         if (block.type != Material.CHEST && block.type != Material.BARREL) return
 
         val blockState = block.state
+
+        // Vanilla behaviour
+        if (player.isSneaking) {
+            val handItem = player.inventory.itemInMainHand
+            if (handItem.type != Material.AIR) return
+        }
+        val blockAbove = block.getRelative(0, 1, 0)
+        if (blockAbove.type.isSolid) return
+
         val lootTable = when (blockState) {
             is Chest -> blockState.lootTable
             is Barrel -> blockState.lootTable
             else -> null
         }
-
         if (lootTable == null) return
 
         val blockTypeName = if (blockState is Chest) "Chest" else "Barrel"
@@ -51,6 +59,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                 Component.text("Loot $blockTypeName")
             )
 
+            // Populate loot table
             val context = LootContext.Builder(block.location)
                 .lootedEntity(player)
                 .build()
@@ -67,9 +76,9 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
             // Load player-specific items asynchronously
             CompletableFuture.runAsync {
                 plugin.connection.prepareStatement("""
-                SELECT slot, item_type, amount FROM player_chest
-                WHERE player_uuid = ? AND chest_id = ?
-            """).use { stmt ->
+                    SELECT slot, item_type, amount FROM player_chest
+                    WHERE player_uuid = ? AND chest_id = ?
+                """).use { stmt ->
                     stmt.setString(1, playerUuid)
                     stmt.setString(2, chestId)
                     val rs = stmt.executeQuery()
