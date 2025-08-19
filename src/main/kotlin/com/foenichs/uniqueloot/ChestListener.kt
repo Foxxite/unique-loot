@@ -31,49 +31,45 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         if (block.type != Material.CHEST && block.type != Material.BARREL) return
 
         val blockState = block.state
-        val blockTypeName = when (blockState) {
-            is Chest -> "Chest"
-            is Barrel -> "Barrel"
-            else -> return
+        val lootTable = when (blockState) {
+            is Chest -> blockState.lootTable
+            is Barrel -> blockState.lootTable
+            else -> null
         }
 
+        if (lootTable == null) return
+
+        val blockTypeName = if (blockState is Chest) "Chest" else "Barrel"
         val chestId = "${block.world.name}_${block.x}_${block.y}_${block.z}"
         val playerUuid = player.uniqueId.toString()
         val chestMap = playerChests.getOrPut(playerUuid) { mutableMapOf() }
 
         val virtualInventoryPair = chestMap.getOrPut(chestId) {
-            val inv = org.bukkit.Bukkit.createInventory(player, (blockState as? Chest)?.inventory?.size ?: (blockState as Barrel).inventory.size,
+            val inv = org.bukkit.Bukkit.createInventory(
+                player,
+                (blockState as? Chest)?.inventory?.size ?: (blockState as Barrel).inventory.size,
                 Component.text("Loot $blockTypeName")
             )
 
-            // Populate loot table if available
-            val lootTable = when (blockState) {
-                is Chest -> blockState.lootTable
-                is Barrel -> blockState.lootTable
-                else -> null
-            }
+            val context = LootContext.Builder(block.location)
+                .lootedEntity(player)
+                .build()
+            val random = Random()
+            val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
 
-            if (lootTable != null) {
-                val context = LootContext.Builder(block.location)
-                    .lootedEntity(player)
-                    .build()
-                val random = Random()
-                val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
-
-                val emptySlots = (0 until inv.size).filter { inv.getItem(it) == null }.toMutableList()
-                emptySlots.shuffle(random)
-                for (item in items) {
-                    if (emptySlots.isEmpty()) break
-                    inv.setItem(emptySlots.removeAt(0), item)
-                }
+            val emptySlots = (0 until inv.size).filter { inv.getItem(it) == null }.toMutableList()
+            emptySlots.shuffle(random)
+            for (item in items) {
+                if (emptySlots.isEmpty()) break
+                inv.setItem(emptySlots.removeAt(0), item)
             }
 
             // Load player-specific items asynchronously
             CompletableFuture.runAsync {
                 plugin.connection.prepareStatement("""
-                    SELECT slot, item_type, amount FROM player_chest
-                    WHERE player_uuid = ? AND chest_id = ?
-                """).use { stmt ->
+                SELECT slot, item_type, amount FROM player_chest
+                WHERE player_uuid = ? AND chest_id = ?
+            """).use { stmt ->
                     stmt.setString(1, playerUuid)
                     stmt.setString(2, chestId)
                     val rs = stmt.executeQuery()
