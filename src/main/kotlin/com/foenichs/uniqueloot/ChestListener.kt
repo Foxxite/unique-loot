@@ -12,6 +12,7 @@ import org.bukkit.event.Listener
 import org.bukkit.event.block.Action
 import org.bukkit.event.inventory.InventoryCloseEvent
 import org.bukkit.event.player.PlayerInteractEvent
+import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
 import org.bukkit.loot.LootContext
@@ -171,6 +172,24 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         }
 
         handleChestClose(player, realBlock, chestId)
+    }
+
+
+    @EventHandler
+    fun onPlayerQuit(event: PlayerQuitEvent) {
+        val player = event.player
+        val uuid = player.uniqueId.toString()
+
+        // Remove all virtual inventories for this player
+        playerChests.remove(uuid)
+
+        // Remove player from any chest viewers
+        chestViewers.values.forEach { viewers ->
+            viewers.remove(player)
+        }
+
+        // Clean up empty entries in chestViewers
+        chestViewers.entries.removeIf { it.value.isEmpty() }
     }
 
     private fun handleChestOpen(player: Player, blockState: Any, chestId: String) {
