@@ -1,6 +1,7 @@
 package com.foenichs.uniqueloot
 
 import net.kyori.adventure.text.Component
+import org.bukkit.Bukkit
 import org.bukkit.GameMode
 import org.bukkit.Material
 import org.bukkit.Sound
@@ -16,23 +17,34 @@ import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
 import org.bukkit.loot.LootContext
-import org.yaml.snakeyaml.Yaml
+import org.bukkit.scheduler.BukkitRunnable
+import org.bukkit.util.io.BukkitObjectInputStream
+import org.bukkit.util.io.BukkitObjectOutputStream
+import java.io.*
+import java.util.Base64
 import java.util.concurrent.CompletableFuture
 
 class ChestListener(private val plugin: UniqueLoot) : Listener {
 
     private val playerChests: MutableMap<String, MutableMap<String, Pair<Inventory, Any>>> = mutableMapOf()
     private val chestViewers: MutableMap<String, MutableSet<Player>> = mutableMapOf()
-    private val yaml = Yaml()
 
-    // Serialize/deserialize ItemStack to YAML
+    // Serialization
+    @Throws(IOException::class)
     private fun ItemStack.serializeToString(): String {
-        return yaml.dump(this.serialize())
+        val baos = ByteArrayOutputStream()
+        BukkitObjectOutputStream(baos).use { out ->
+            out.writeObject(this)
+        }
+        return Base64.getEncoder().encodeToString(baos.toByteArray())
     }
 
+    @Throws(IOException::class, ClassNotFoundException::class)
     private fun deserializeItemStack(data: String): ItemStack? {
-        val map = yaml.load<Map<String, Any>>(data) ?: return null
-        return ItemStack.deserialize(map)
+        val bais = ByteArrayInputStream(Base64.getDecoder().decode(data))
+        BukkitObjectInputStream(bais).use { input ->
+            return input.readObject() as? ItemStack
+        }
     }
 
     @EventHandler
@@ -57,78 +69,88 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
             is Chest -> blockState.lootTable
             is Barrel -> blockState.lootTable
             else -> null
-        }
-        if (lootTable == null) return
+        } ?: return
+
+        event.isCancelled = true
 
         val blockTypeName = if (blockState is Chest) "Chest" else "Barrel"
         val chestId = "${block.world.name}_${block.x}_${block.y}_${block.z}"
         val playerUuid = player.uniqueId.toString()
         val chestMap = playerChests.getOrPut(playerUuid) { mutableMapOf() }
 
-        val virtualInventoryPair = chestMap.getOrPut(chestId) {
-            val inv = org.bukkit.Bukkit.createInventory(
-                player,
-                (blockState as? Chest)?.inventory?.size ?: (blockState as Barrel).inventory.size,
-                Component.text("Loot $blockTypeName")
-            )
-
-            // Load player-specific items asynchronously first
-            CompletableFuture.runAsync {
-                val hasSavedItems = plugin.connection.prepareStatement(
-                    """
-            SELECT COUNT(*) as count FROM player_chest
-            WHERE player_uuid = ? AND chest_id = ?
-        """
-                ).use { stmt ->
-                    stmt.setString(1, playerUuid)
-                    stmt.setString(2, chestId)
-                    val rs = stmt.executeQuery()
-                    rs.next()
-                    rs.getInt("count") > 0
-                }
-
-                // Only populate loot if there are no saved items
-                if (!hasSavedItems) {
-                    val context = LootContext.Builder(block.location).lootedEntity(player).build()
-                    val random = java.util.Random()
-                    val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
-
-                    val emptySlots = (0 until inv.size).filter { inv.getItem(it) == null }.toMutableList()
-                    emptySlots.shuffle(random)
-                    for (item in items) {
-                        if (emptySlots.isEmpty()) break
-                        inv.setItem(emptySlots.removeAt(0), item)
-                    }
-                }
-
-                // Load any saved items
-                plugin.connection.prepareStatement(
-                    """
-            SELECT slot, item_data FROM player_chest
-            WHERE player_uuid = ? AND chest_id = ?
-        """
-                ).use { stmt ->
-                    stmt.setString(1, playerUuid)
-                    stmt.setString(2, chestId)
-                    val rs = stmt.executeQuery()
-                    while (rs.next()) {
-                        val slot = rs.getInt("slot")
-                        val serialized = rs.getString("item_data") ?: continue
-                        val item = deserializeItemStack(serialized) ?: continue
-                        inv.setItem(slot, item)
-                    }
+        // Async DB read -> main thread construct & open
+        CompletableFuture.supplyAsync {
+            // Load saved items (slot -> base64) off-thread
+            val saved: MutableList<Pair<Int, String>> = mutableListOf()
+            plugin.connection.prepareStatement(
+                """
+                SELECT slot, item_data FROM player_chest
+                WHERE player_uuid = ? AND chest_id = ?
+                """.trimIndent()
+            ).use { stmt ->
+                stmt.setString(1, playerUuid)
+                stmt.setString(2, chestId)
+                val rs = stmt.executeQuery()
+                while (rs.next()) {
+                    val slot = rs.getInt("slot")
+                    val data = rs.getString("item_data") ?: continue
+                    saved.add(slot to data)
                 }
             }
+            saved
+        }.whenComplete { savedItems, err ->
+            if (err != null) {
+                plugin.logger.warning("Failed to load chest items for $playerUuid/$chestId: ${err.message}")
+                // still proceed to open with generated loot
+            }
 
-            Pair(inv, blockState)
+            // Back to main thread for all Bukkit object work
+            object : BukkitRunnable() {
+                override fun run() {
+                    // Create inventory
+                    val inv = Bukkit.createInventory(
+                        player,
+                        (blockState as? Chest)?.inventory?.size ?: (blockState as Barrel).inventory.size,
+                        Component.text("Loot $blockTypeName")
+                    )
+
+                    val hadSaved = !savedItems.isNullOrEmpty()
+
+                    // If no saved items -> generate loot now (main thread)
+                    if (!hadSaved) {
+                        val context = LootContext.Builder(block.location)
+                            .lootedEntity(player)
+                            .build()
+                        val random = java.util.Random()
+                        val items: Collection<ItemStack> = lootTable.populateLoot(random, context)
+
+                        val emptySlots = (0 until inv.size).filter { inv.getItem(it) == null }.toMutableList()
+                        emptySlots.shuffle(random)
+                        for (item in items) {
+                            if (emptySlots.isEmpty()) break
+                            inv.setItem(emptySlots.removeAt(0), item)
+                        }
+                    }
+
+                    // Deserialize saved items on main thread (safe for treasure maps)
+                    if (hadSaved) {
+                        for ((slot, data) in savedItems) {
+                            try {
+                                val item = deserializeItemStack(data)
+                                if (item != null) inv.setItem(slot, item)
+                            } catch (ex: Exception) {
+                                plugin.logger.warning("Failed to deserialize item for $playerUuid/$chestId at slot $slot: ${ex.message}")
+                            }
+                        }
+                    }
+
+                    // Track & open
+                    chestMap[chestId] = Pair(inv, blockState)
+                    handleChestOpen(player, blockState, chestId)
+                    player.openInventory(inv)
+                }
+            }.runTask(plugin)
         }
-
-        val virtualInventory = virtualInventoryPair.first
-        val realBlock = virtualInventoryPair.second
-
-        event.isCancelled = true
-        handleChestOpen(player, realBlock, chestId)
-        player.openInventory(virtualInventory)
     }
 
     @EventHandler
@@ -136,59 +158,67 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         val player = event.player as? Player ?: return
         val inventory = event.inventory
         val chestMap = playerChests[player.uniqueId.toString()] ?: return
-        val chestPairEntry = chestMap.entries.find { it.value.first === inventory } ?: return
-        val chestId = chestPairEntry.key
-        val realBlock = chestPairEntry.value.second
+        val entry = chestMap.entries.find { it.value.first === inventory } ?: return
+        val chestId = entry.key
+        val realBlock = entry.value.second
+
+        // Serialize on main thread (Bukkit objects), then DB write async
+        val serializedItems: MutableList<Triple<Int, String, String>> = mutableListOf()
+        for (slot in 0 until inventory.size) {
+            val item = inventory.getItem(slot) ?: continue
+            try {
+                val data = item.serializeToString() // main thread
+                serializedItems.add(Triple(slot, data, player.uniqueId.toString()))
+            } catch (ex: Exception) {
+                plugin.logger.warning("Failed to serialize item for ${player.uniqueId}/$chestId @ $slot: ${ex.message}")
+            }
+        }
 
         CompletableFuture.runAsync {
-            // Delete previous saved items
-            plugin.connection.prepareStatement(
-                """
-                DELETE FROM player_chest WHERE player_uuid = ? AND chest_id = ?
-            """
-            ).use { stmt ->
-                stmt.setString(1, player.uniqueId.toString())
-                stmt.setString(2, chestId)
-                stmt.executeUpdate()
-            }
-
-            // Insert serialized items
-            plugin.connection.prepareStatement(
-                """
-                INSERT INTO player_chest (player_uuid, chest_id, slot, item_data)
-                VALUES (?, ?, ?, ?)
-            """
-            ).use { stmt ->
-                for (slot in 0 until inventory.size) {
-                    val item = inventory.getItem(slot) ?: continue
+            try {
+                // Clear previous
+                plugin.connection.prepareStatement(
+                    """
+                    DELETE FROM player_chest WHERE player_uuid = ? AND chest_id = ?
+                    """.trimIndent()
+                ).use { stmt ->
                     stmt.setString(1, player.uniqueId.toString())
                     stmt.setString(2, chestId)
-                    stmt.setInt(3, slot)
-                    stmt.setString(4, item.serializeToString())
-                    stmt.addBatch()
+                    stmt.executeUpdate()
                 }
-                stmt.executeBatch()
+
+                if (serializedItems.isNotEmpty()) {
+                    plugin.connection.prepareStatement(
+                        """
+                        INSERT INTO player_chest (player_uuid, chest_id, slot, item_data)
+                        VALUES (?, ?, ?, ?)
+                        """.trimIndent()
+                    ).use { stmt ->
+                        for ((slot, data, uuid) in serializedItems) {
+                            stmt.setString(1, uuid)
+                            stmt.setString(2, chestId)
+                            stmt.setInt(3, slot)
+                            stmt.setString(4, data)
+                            stmt.addBatch()
+                        }
+                        stmt.executeBatch()
+                    }
+                }
+            } catch (ex: Exception) {
+                plugin.logger.warning("DB write failed for ${player.uniqueId}/$chestId: ${ex.message}")
             }
         }
 
         handleChestClose(player, realBlock, chestId)
     }
 
-
     @EventHandler
     fun onPlayerQuit(event: PlayerQuitEvent) {
         val player = event.player
         val uuid = player.uniqueId.toString()
 
-        // Remove all virtual inventories for this player
         playerChests.remove(uuid)
-
-        // Remove player from any chest viewers
-        chestViewers.values.forEach { viewers ->
-            viewers.remove(player)
-        }
-
-        // Clean up empty entries in chestViewers
+        chestViewers.values.forEach { it.remove(player) }
         chestViewers.entries.removeIf { it.value.isEmpty() }
     }
 
@@ -204,7 +234,6 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                     blockState.open()
                     blockState.world.playSound(blockState.location, Sound.BLOCK_CHEST_OPEN, 1.0f, 1.0f)
                 }
-
                 is Barrel -> {
                     blockState.world.playSound(blockState.location, Sound.BLOCK_BARREL_OPEN, 1.0f, 1.0f)
                 }
@@ -224,7 +253,6 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                     blockState.close()
                     blockState.world.playSound(blockState.location, Sound.BLOCK_CHEST_CLOSE, 1.0f, 1.0f)
                 }
-
                 is Barrel -> {
                     blockState.world.playSound(blockState.location, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
                 }
