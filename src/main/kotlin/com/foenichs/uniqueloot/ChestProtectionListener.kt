@@ -14,7 +14,7 @@ import org.bukkit.event.block.BlockPlaceEvent
 import org.bukkit.event.entity.EntityExplodeEvent
 import org.bukkit.event.inventory.InventoryMoveItemEvent
 
-class LootChestProtectionListener(
+class ChestProtectionListener(
     private val chestListener: ChestListener
 ) : Listener {
 
@@ -41,12 +41,14 @@ class LootChestProtectionListener(
     @EventHandler
     fun onInventoryMove(event: InventoryMoveItemEvent) {
         val holder = event.source.holder
-        if (holder is Chest || holder is Barrel) {
-            val block = holder as? Block ?: return
-            val chestId = "${block.world.name}_${block.x}_${block.y}_${block.z}"
-            if (chestListener.isLootChest(chestId)) {
-                event.isCancelled = true
-            }
+        val block = when (holder) {
+            is Chest -> holder.block
+            is Barrel -> holder.block
+            else -> null
+        } ?: return
+
+        if (isLootChest(block)) {
+            event.isCancelled = true
         }
     }
 
@@ -64,12 +66,10 @@ class LootChestProtectionListener(
     @EventHandler
     fun onBlockPlace(event: BlockPlaceEvent) {
         if (event.block.type != Material.HOPPER) return
-
-        // Exclude players in Creative mode
         if (event.player.gameMode == GameMode.CREATIVE) return
 
         val block = event.block
-        val directions = listOf(
+        val neighbors = listOf(
             block.getRelative(0, 1, 0),  // Above
             block.getRelative(0, -1, 0), // Below
             block.getRelative(1, 0, 0),  // East
@@ -78,7 +78,7 @@ class LootChestProtectionListener(
             block.getRelative(0, 0, -1)  // North
         )
 
-        if (directions.any { isLootChest(it) }) {
+        if (neighbors.any { isLootChest(it) }) {
             event.isCancelled = true
             event.player.sendActionBar(Component.text("You can't interact using hoppers!"))
         }

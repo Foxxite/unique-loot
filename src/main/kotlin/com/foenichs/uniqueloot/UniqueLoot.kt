@@ -11,35 +11,39 @@ class UniqueLoot : JavaPlugin() {
         private set
 
     private lateinit var chestListener: ChestListener
-    private lateinit var protectionListener: LootChestProtectionListener
+    private lateinit var protectionListener: ChestProtectionListener
 
     override fun onEnable() {
         // Ensure plugin folder exists
-        if (!dataFolder.exists()) dataFolder.mkdirs()
+        if (!dataFolder.exists()) {
+            dataFolder.mkdirs()
+        }
 
         // Create or open SQLite database
         val dbFile = File(dataFolder, "uniqueLoot.db")
         connection = DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}")
 
         // Create table if it doesn't exist
-        connection.prepareStatement("""
+        connection.prepareStatement(
+            """
             CREATE TABLE IF NOT EXISTS player_chest (
                 player_uuid TEXT NOT NULL,
-                chest_id TEXT NOT NULL,
-                slot INTEGER NOT NULL,
-                item_data TEXT NOT NULL,
+                chest_id   TEXT NOT NULL,
+                slot       INTEGER NOT NULL,
+                item_data  TEXT NOT NULL,
                 PRIMARY KEY(player_uuid, chest_id, slot)
             );
-        """).executeUpdate()
-
+            """
+        ).use { stmt ->
+            stmt.executeUpdate()
+        }
 
         // Register the chest listener
         chestListener = ChestListener(this)
         server.pluginManager.registerEvents(chestListener, this)
 
         // Register the loot chest protection listener
-        // Pass the ChestListener's map reference for dynamic tracking
-        protectionListener = LootChestProtectionListener(chestListener)
+        protectionListener = ChestProtectionListener(chestListener)
         server.pluginManager.registerEvents(protectionListener, this)
     }
 
