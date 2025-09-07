@@ -33,6 +33,13 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
     private val playerInventories: MutableMap<UUID, MutableMap<String, Opened>> = mutableMapOf()
     private val viewers: MutableMap<String, MutableSet<UUID>> = mutableMapOf()
 
+    // sentinel to mark opened but empty inventories in the database
+    // using a negative slot which can never be a real inventory slot
+    companion object {
+        private const val EMPTY_SENTINEL_SLOT = -1
+        private const val EMPTY_SENTINEL_DATA = "-"
+    }
+
     private data class Opened(val inv: Inventory, val anchorBlock: Block, val type: ContainerKind)
     private enum class ContainerKind { SINGLE_CHEST, DOUBLE_CHEST, BARREL }
 
@@ -174,6 +181,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         val containerId = entry.key
         val opened = entry.value
 
+        // collect items to store or leave empty to mark as opened but empty
         val toStore = buildList {
             for (slot in 0 until opened.inv.size) {
                 opened.inv.getItem(slot)?.let { add(slot to it.serializeToString()) }
@@ -273,12 +281,21 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                 stmt.setString(2, containerId)
                 stmt.executeQuery().use { rs ->
                     val out = mutableListOf<Pair<Int, String>>()
+                    var sawEmptySentinel = false
                     while (rs.next()) {
                         val slot = rs.getInt("slot")
+                        if (slot == EMPTY_SENTINEL_SLOT) {
+                            sawEmptySentinel = true
+                            continue
+                        }
                         val data = rs.getString("item_data") ?: continue
                         out.add(slot to data)
                     }
-                    return if (out.isEmpty()) null else out
+                    return when {
+                        out.isNotEmpty() -> out
+                        sawEmptySentinel -> emptyList()
+                        else -> null
+                    }
                 }
             }
         } catch (t: Throwable) {
@@ -309,6 +326,17 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                         ins.addBatch()
                     }
                     ins.executeBatch()
+                }
+            } else {
+                // write a sentinel row to mark opened but empty
+                plugin.connection.prepareStatement(
+                    "INSERT INTO player_chest (player_uuid, chest_id, slot, item_data) VALUES (?, ?, ?, ?)"
+                ).use { ins ->
+                    ins.setString(1, playerId.toString())
+                    ins.setString(2, containerId)
+                    ins.setInt(3, EMPTY_SENTINEL_SLOT)
+                    ins.setString(4, EMPTY_SENTINEL_DATA)
+                    ins.executeUpdate()
                 }
             }
             plugin.connection.commit()
