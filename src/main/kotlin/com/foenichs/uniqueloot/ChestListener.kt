@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION")
 package com.foenichs.uniqueloot
 
 import net.kyori.adventure.text.Component
@@ -36,14 +37,12 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
     private enum class ContainerKind { SINGLE_CHEST, DOUBLE_CHEST, BARREL }
 
     // Serialization
-
     @Throws(IOException::class)
     private fun ItemStack.serializeToString(): String {
         val baos = ByteArrayOutputStream()
         BukkitObjectOutputStream(baos).use { out -> out.writeObject(this) }
         return Base64.getEncoder().encodeToString(baos.toByteArray())
     }
-
     @Throws(IOException::class, ClassNotFoundException::class)
     private fun deserializeItemStack(data: String): ItemStack? {
         val bytes = Base64.getDecoder().decode(data)
