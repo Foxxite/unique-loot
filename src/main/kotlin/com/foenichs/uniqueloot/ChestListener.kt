@@ -121,8 +121,9 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         }
 
         CompletableFuture.supplyAsync { loadFromDb(player.uniqueId, containerId) }.whenComplete { saved, err ->
-            if (err != null) plugin.logger.warning("" +
-                    "DB load failed for ${player.uniqueId}/$containerId: ${err.message}")
+            if (err != null) plugin.logger.warning(
+                "DB load failed for ${player.uniqueId}/$containerId: ${err.message}"
+            )
 
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 val size = when (kind) {
@@ -140,31 +141,21 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                     for ((slot, data) in saved) {
                         try {
                             deserializeItemStack(data)?.let { inv.setItem(slot, it) }
-                        } catch (_: Exception) {
-                        }
+                        } catch (_: Exception) {}
                     }
                 } else {
                     val rng = Random()
                     val context = LootContext.Builder(block.location).lootedEntity(player).build()
-                    val items = mutableListOf<ItemStack>()
                     if (isChest) {
                         val holder = state.inventory.holder
                         if (holder is DoubleChest) {
-                            (holder.leftSide as? Chest)?.lootTable?.populateLoot(rng, context)?.let { items.addAll(it) }
-                            (holder.rightSide as? Chest)?.lootTable?.populateLoot(rng, context)
-                                ?.let { items.addAll(it) }
+                            (holder.leftSide as? Chest)?.lootTable?.fillInventory(inv, rng, context)
+                            (holder.rightSide as? Chest)?.lootTable?.fillInventory(inv, rng, context)
                         } else {
-                            lootTable.populateLoot(rng, context).let { items.addAll(it) }
+                            lootTable.fillInventory(inv, rng, context)
                         }
                     } else {
-                        lootTable.populateLoot(rng, context).let { items.addAll(it) }
-                    }
-
-                    val emptySlots = (0 until inv.size).filter { inv.getItem(it) == null }.toMutableList()
-                    emptySlots.shuffle(rng)
-                    for (it in items) {
-                        if (emptySlots.isEmpty()) break
-                        inv.setItem(emptySlots.removeAt(0), it)
+                        lootTable.fillInventory(inv, rng, context)
                     }
                 }
 
