@@ -218,7 +218,11 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
     private fun playOpenAnimation(opened: Opened) {
         val loc = getChestAnimationLocation(opened)
         when (opened.type) {
-            ContainerKind.BARREL -> opened.anchorBlock.world.playSound(loc, Sound.BLOCK_BARREL_OPEN, 1.0f, 1.0f)
+            ContainerKind.BARREL -> {
+                opened.anchorBlock.world.playSound(loc, Sound.BLOCK_BARREL_OPEN, 1.0f, 1.0f)
+                val state = opened.anchorBlock.state
+                if (state is Barrel) state.open()
+            }
             else -> {
                 opened.anchorBlock.world.playSound(loc, Sound.BLOCK_CHEST_OPEN, 1.0f, 1.0f)
                 val state = opened.anchorBlock.state
@@ -230,7 +234,11 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
     private fun playCloseAnimation(opened: Opened) {
         val loc = getChestAnimationLocation(opened)
         when (opened.type) {
-            ContainerKind.BARREL -> opened.anchorBlock.world.playSound(loc, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
+            ContainerKind.BARREL -> {
+                opened.anchorBlock.world.playSound(loc, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
+                val state = opened.anchorBlock.state
+                if (state is Barrel) state.close()
+            }
             else -> {
                 opened.anchorBlock.world.playSound(loc, Sound.BLOCK_CHEST_CLOSE, 1.0f, 1.0f)
                 val state = opened.anchorBlock.state
