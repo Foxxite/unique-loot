@@ -1,4 +1,5 @@
 @file:Suppress("DEPRECATION")
+
 package com.foenichs.uniqueloot
 
 import net.kyori.adventure.text.Component
@@ -50,6 +51,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         BukkitObjectOutputStream(baos).use { out -> out.writeObject(this) }
         return Base64.getEncoder().encodeToString(baos.toByteArray())
     }
+
     @Throws(IOException::class, ClassNotFoundException::class)
     private fun deserializeItemStack(data: String): ItemStack? {
         val bytes = Base64.getDecoder().decode(data)
@@ -96,20 +98,23 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         if (e.action != Action.RIGHT_CLICK_BLOCK) return
         val block = e.clickedBlock ?: return
         val state = block.state
+        val player = e.player
 
         val isChest = state is Chest
         val isBarrel = state is Barrel
         if (!isChest && !isBarrel) return
-
-        val player = e.player
-        if (player.isSneaking) return
-        if (isBlockedAbove(block)) return
 
         val lootTable = when (state) {
             is Chest -> state.lootTable
             is Barrel -> state.lootTable
             else -> null
         } ?: return
+
+        // Vanilla restrictions
+        if (isBlockedAbove(block)) return
+        if (player.isSneaking && !player.inventory.itemInMainHand.type.isAir) {
+            return
+        }
 
         e.isCancelled = true
 
@@ -138,7 +143,8 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                 }
                 val title = when (kind) {
                     ContainerKind.BARREL -> Component.text("Loot ").append(Component.translatable("container.barrel"))
-                    ContainerKind.SINGLE_CHEST, ContainerKind.DOUBLE_CHEST -> Component.text("Loot ").append(Component.translatable("container.chest"))
+                    ContainerKind.SINGLE_CHEST, ContainerKind.DOUBLE_CHEST -> Component.text("Loot ")
+                        .append(Component.translatable("container.chest"))
                 }
 
                 val inv = Bukkit.createInventory(player, size, title)
