@@ -6,6 +6,7 @@ import org.bukkit.Material
 import org.bukkit.block.Barrel
 import org.bukkit.block.Block
 import org.bukkit.block.Chest
+import org.bukkit.block.data.type.Chest.Type
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.block.BlockBreakEvent
@@ -62,25 +63,54 @@ class ChestProtectionListener(
         event.blockList().removeIf { isLootChest(it) }
     }
 
-    // Prevent placing hoppers next to loot containers
     @EventHandler
     fun onBlockPlace(event: BlockPlaceEvent) {
-        if (event.block.type != Material.HOPPER) return
-        if (event.player.gameMode == GameMode.CREATIVE) return
-
         val block = event.block
-        val neighbors = listOf(
-            block.getRelative(0, 1, 0),  // Above
-            block.getRelative(0, -1, 0), // Below
-            block.getRelative(1, 0, 0),  // East
-            block.getRelative(-1, 0, 0), // West
-            block.getRelative(0, 0, 1),  // South
-            block.getRelative(0, 0, -1)  // North
-        )
 
-        if (neighbors.any { isLootChest(it) }) {
-            event.isCancelled = true
-            event.player.sendActionBar(Component.text("You can't interact using hoppers!"))
+        // Prevent placing hoppers next to loot containers
+        if (block.type == Material.HOPPER && event.player.gameMode != GameMode.CREATIVE) {
+            val neighbors = listOf(
+                block.getRelative(0, 1, 0),  // Above
+                block.getRelative(0, -1, 0), // Below
+                block.getRelative(1, 0, 0),  // East
+                block.getRelative(-1, 0, 0), // West
+                block.getRelative(0, 0, 1),  // South
+                block.getRelative(0, 0, -1)  // North
+            )
+
+            if (neighbors.any { isLootChest(it) }) {
+                event.isCancelled = true
+                event.player.sendActionBar(Component.text("You can't interact using hoppers!"))
+            }
+        }
+
+        // Prevent normal chests from merging with loot chests
+        if (block.type == Material.CHEST) {
+            val state = block.state as? Chest ?: return
+            val neighbors = listOf(
+                block.getRelative(1, 0, 0),
+                block.getRelative(-1, 0, 0),
+                block.getRelative(0, 0, 1),
+                block.getRelative(0, 0, -1)
+            )
+
+            for (neighbor in neighbors) {
+                val neighborState = neighbor.state as? Chest ?: continue
+                if (neighborState.lootTable != null) {
+                    // Force both to stay single
+                    forceSingle(neighborState)
+                    forceSingle(state)
+                }
+            }
+        }
+    }
+
+    private fun forceSingle(chest: Chest) {
+        val data = chest.blockData as? org.bukkit.block.data.type.Chest ?: return
+        if (data.type != Type.SINGLE) {
+            data.type = Type.SINGLE
+            chest.blockData = data
+            chest.update(true, false)
         }
     }
 }
