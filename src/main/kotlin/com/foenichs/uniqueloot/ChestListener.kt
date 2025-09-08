@@ -54,9 +54,14 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
 
     @Throws(IOException::class, ClassNotFoundException::class)
     private fun deserializeItemStack(data: String): ItemStack? {
-        val bytes = Base64.getDecoder().decode(data)
-        ByteArrayInputStream(bytes).use { bais ->
-            BukkitObjectInputStream(bais).use { inStream -> return inStream.readObject() as? ItemStack }
+        return try {
+            val bytes = Base64.getDecoder().decode(data)
+            ByteArrayInputStream(bytes).use { bais ->
+                BukkitObjectInputStream(bais).use { inStream -> inStream.readObject() as? ItemStack }
+            }
+        } catch (ex: Exception) {
+            plugin.logger.warning("Failed to deserialize ItemStack: ${ex.message}")
+            null
         }
     }
 
