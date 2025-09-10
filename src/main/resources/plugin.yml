@@ -1,5 +1,5 @@
 name: UniqueLoot
-version: '1.0.5-beta'
+version: '1.0.6'
 main: com.foenichs.uniqueloot.UniqueLoot
 api-version: '1.21.8'
 prefix: "UniqueLoot"

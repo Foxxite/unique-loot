@@ -43,7 +43,7 @@ class UniqueLoot : JavaPlugin() {
         server.pluginManager.registerEvents(chestListener, this)
 
         // Register the loot chest protection listener
-        protectionListener = ChestProtectionListener(chestListener)
+        protectionListener = ChestProtectionListener()
         server.pluginManager.registerEvents(protectionListener, this)
     }
 

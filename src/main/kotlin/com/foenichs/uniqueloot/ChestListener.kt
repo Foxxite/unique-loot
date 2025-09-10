@@ -35,7 +35,6 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
     private val viewers: MutableMap<String, MutableSet<UUID>> = mutableMapOf()
 
     // sentinel to mark opened but empty inventories in the database
-    // using a negative slot which can never be a real inventory slot
     companion object {
         private const val EMPTY_SENTINEL_SLOT = -1
         private const val EMPTY_SENTINEL_DATA = "-"
@@ -158,7 +157,8 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                     for ((slot, data) in saved) {
                         try {
                             deserializeItemStack(data)?.let { inv.setItem(slot, it) }
-                        } catch (_: Exception) {}
+                        } catch (_: Exception) {
+                        }
                     }
                 } else {
                     val rng = Random()
@@ -241,6 +241,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                 val state = opened.anchorBlock.state
                 if (state is Barrel) state.open()
             }
+
             else -> {
                 opened.anchorBlock.world.playSound(loc, Sound.BLOCK_CHEST_OPEN, 1.0f, 1.0f)
                 val state = opened.anchorBlock.state
@@ -257,6 +258,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                 val state = opened.anchorBlock.state
                 if (state is Barrel) state.close()
             }
+
             else -> {
                 opened.anchorBlock.world.playSound(loc, Sound.BLOCK_CHEST_CLOSE, 1.0f, 1.0f)
                 val state = opened.anchorBlock.state
