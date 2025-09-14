@@ -3,15 +3,15 @@
 package com.foenichs.uniqueloot
 
 import net.kyori.adventure.text.Component
-import org.bukkit.Bukkit
-import org.bukkit.GameMode
-import org.bukkit.Sound
+import org.bukkit.*
 import org.bukkit.block.Barrel
 import org.bukkit.block.Block
 import org.bukkit.block.Chest
 import org.bukkit.block.DoubleChest
 import org.bukkit.block.data.type.Chest.Type
+import org.bukkit.entity.Piglin
 import org.bukkit.entity.Player
+import org.bukkit.entity.memory.MemoryKey
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.block.Action
@@ -122,6 +122,19 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
 
         e.isCancelled = true
 
+        // Anger piglins
+        val radius = 16.0
+        val world = block.world
+        world.getNearbyEntities(block.location, radius, radius, radius).filterIsInstance<Piglin>().forEach { piglin ->
+            piglin.setMemory(MemoryKey.ANGRY_AT, player.uniqueId)
+        }
+
+        // Trigger sculk vibrations
+        block.world.sendGameEvent(player, GameEvent.CONTAINER_OPEN, block.location.toVector())
+
+        val lootTableKey = lootTable.key // this is the NamespacedKey
+        grantWarPigsAdvancement(player, lootTableKey)
+
         val containerId = if (isChest) canonicalChestId(state) else canonicalId(block)
         val kind = when {
             isChest && state.blockData is org.bukkit.block.data.type.Chest && (state.blockData as org.bukkit.block.data.type.Chest).type != Type.SINGLE -> ContainerKind.DOUBLE_CHEST
@@ -202,6 +215,10 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         CompletableFuture.runAsync { saveToDb(player.uniqueId, containerId, toStore) }
 
         closeFor(player, containerId, opened)
+
+        // Use the real block associated with this virtual inventory
+        val block = opened.anchorBlock
+        block.world.sendGameEvent(player, GameEvent.CONTAINER_CLOSE, block.location.toVector())
     }
 
     @EventHandler
@@ -267,7 +284,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
         }
     }
 
-    private fun getChestAnimationLocation(opened: Opened): org.bukkit.Location {
+    private fun getChestAnimationLocation(opened: Opened): Location {
         val block = opened.anchorBlock
         if (opened.type != ContainerKind.DOUBLE_CHEST) return block.location.add(0.5, 0.5, 0.5)
         val state = block.state as? Chest ?: return block.location.add(0.5, 0.5, 0.5)
@@ -278,9 +295,29 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
             val midX = (left.x + right.x) / 2.0 + 0.5
             val midY = (left.y + right.y) / 2.0 + 0.5
             val midZ = (left.z + right.z) / 2.0 + 0.5
-            return org.bukkit.Location(left.world, midX, midY, midZ)
+            return Location(left.world, midX, midY, midZ)
         }
         return block.location.add(0.5, 0.5, 0.5)
+    }
+
+    fun grantWarPigsAdvancement(player: Player, lootTable: NamespacedKey) {
+        val bastionLootTables = setOf(
+            NamespacedKey.minecraft("chests/bastion_hoglin_stable"),
+            NamespacedKey.minecraft("chests/bastion_other"),
+            NamespacedKey.minecraft("chests/bastion_treasure"),
+            NamespacedKey.minecraft("chests/bastion_bridge")
+        )
+
+        if (lootTable !in bastionLootTables) return
+
+        val advancementKey = NamespacedKey.minecraft("nether/loot_bastion")
+        val advancement = player.server.getAdvancement(advancementKey) ?: return
+        val progress = player.getAdvancementProgress(advancement)
+        if (progress.isDone) return
+
+        for (criterion in progress.remainingCriteria) {
+            progress.awardCriteria(criterion)
+        }
     }
 
     // DB Persistence
