@@ -1,4 +1,4 @@
-<img width="2560" height="1417" alt="showcase" src="https://github.com/user-attachments/assets/8d8dff1a-37f3-41c9-a95c-140e87591167" />
+<img width="2560" height="1417" alt="showcase" src="https://github.com/user-attachments/assets/b02213c3-0bdc-4cf7-a9fe-d1c4bb0b4555" />
 
 ### Each chest that has a loot table creates a unique inventory for each player who opens it!
 
