@@ -196,7 +196,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
                             NamedTextColor.RED))
 
                         player.playSound(block.location, Sound.BLOCK_CHEST_LOCKED, 1.0f, 1.0f)
-                        Particle.ANGRY_VILLAGER.builder().location(block.location).count(14).receivers(32, true).spawn()
+                        Particle.ANGRY_VILLAGER.builder().location(block.location.add(0.5,0.5,0.5)).count(14).receivers(32, true).spawn()
 
                         plugin.logger.warning("Failed to fill loot: ${ex.message}")
 
