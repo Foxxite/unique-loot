@@ -2,8 +2,6 @@
 
 package com.foenichs.uniqueloot
 
-import com.destroystokyo.paper.ParticleBuilder
-import net.kyori.adventure.key.Key
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.*
@@ -70,8 +68,7 @@ class ChestListener(private val plugin: UniqueLoot) : Listener {
     // Canonical IDs
 
     private fun canonicalId(block: Block): String {
-        val state = block.state
-        return when (state) {
+        return when (val state = block.state) {
             is Chest -> canonicalChestId(state)
             is Barrel -> "${block.world.uid}:${block.x},${block.y},${block.z}"
             else -> "${block.world.uid}:${block.x},${block.y},${block.z}"
